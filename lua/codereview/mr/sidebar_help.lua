@@ -73,6 +73,7 @@ function M.build_lines()
       { action = "pick_files", desc = "Pick files" },
       { action = "pick_comments", desc = "Pick comments" },
       { action = "pick_commits", desc = "Pick commits" },
+      { action = "open_file", desc = "Open file in editor" },
       { action = "copy_comment", desc = "Copy comment" },
       { action = "pipe_comment", desc = "Pipe comment to AI" },
       { action = "refresh", desc = "Refresh" },
