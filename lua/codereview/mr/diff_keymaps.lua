@@ -2100,6 +2100,43 @@ function M.setup_keymaps(state, layout, active_states)
     prev_commit = function()
       nav_commit(1)
     end,
+    open_file = function()
+      if state.view_mode ~= "diff" then
+        vim.notify("Navigate to a file diff first", vim.log.levels.WARN)
+        return
+      end
+      local file = state.files and state.files[state.current_file]
+      if not file then
+        vim.notify("No file selected", vim.log.levels.WARN)
+        return
+      end
+      local rel_path = file.new_path or file.old_path
+      if not rel_path or rel_path == "" then
+        vim.notify("Could not determine file path", vim.log.levels.WARN)
+        return
+      end
+      local git = require("codereview.git")
+      local root = git.get_repo_root()
+      if not root or root == "" then
+        vim.notify("Could not find repo root", vim.log.levels.WARN)
+        return
+      end
+      local abs_path = root .. "/" .. rel_path
+
+      -- Get cursor line number from line_data if available
+      local line_nr = 1
+      local cursor_row = vim.api.nvim_win_get_cursor(layout.main_win)[1]
+      local line_data = state.scroll_mode and state.scroll_line_data
+        or (state.line_data_cache[state.current_file] or {})
+      local ld = line_data[cursor_row]
+      if ld and ld.item then
+        line_nr = ld.item.new_line or ld.item.old_line or 1
+      end
+
+      -- Open as a vsplit next to the diff in the review tab
+      vim.api.nvim_set_current_win(layout.main_win)
+      vim.cmd(string.format("vsplit +%d %s", line_nr, vim.fn.fnameescape(abs_path)))
+    end,
     refresh = refresh,
     quit = quit,
   }
@@ -2154,6 +2191,7 @@ function M.setup_keymaps(state, layout, active_states)
     submit = main_callbacks.submit,
     copy_comment = main_callbacks.copy_comment,
     pipe_comment = main_callbacks.pipe_comment,
+    open_file = main_callbacks.open_file,
     refresh = refresh,
     quit = quit,
   }
