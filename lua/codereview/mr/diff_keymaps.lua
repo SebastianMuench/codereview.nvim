@@ -468,6 +468,319 @@ function M.setup_keymaps(state, layout, active_states)
     select_commit_entry({ type = "commit", sha = c.sha, title = c.title })
   end
 
+  -- ── Helpers for batch solve (solve_file_comments / solve_all_comments) ────────
+
+  local function collect_actionable_discs(filter_fn)
+    local git = require("codereview.git")
+    local root = git.get_repo_root()
+    local items = {}
+    for _, disc in ipairs(state.discussions or {}) do
+      if disc.notes and disc.notes[1] and not disc.resolved and not disc.is_draft then
+        local note = disc.notes[1]
+        local pos = note.position or {}
+        local new_path = pos.new_path
+        local old_path = pos.old_path
+        local new_path_valid = new_path
+          and new_path ~= "/dev/null"
+          and vim.fn.filereadable(root .. "/" .. new_path) == 1
+        local file = new_path_valid and new_path or old_path or ""
+        if file ~= "" then
+          local item = {
+            disc = disc,
+            note = note,
+            file = file,
+            abs_path = root .. "/" .. file,
+            basename = file:match("([^/]+)$") or file,
+            ext = file:match("%.([^%.]+)$") or "",
+            line_nr = new_path_valid and pos.new_line or pos.old_line,
+            author = note.author or "reviewer",
+            body = note.body or "",
+          }
+          if not filter_fn or filter_fn(item) then
+            table.insert(items, item)
+          end
+        end
+      end
+    end
+    return items, root
+  end
+
+  local function collect_file_discs()
+    local current_file = state.files and state.files[state.current_file]
+    local current_path = current_file and (current_file.new_path or current_file.old_path)
+    return collect_actionable_discs(function(item)
+      return item.file == current_path
+    end)
+  end
+
+  local function collect_all_discs()
+    return collect_actionable_discs(nil)
+  end
+
+  local function solve_discussions(items, root)
+    if not items or #items == 0 then
+      vim.notify("No open, unresolved comments to solve", vim.log.levels.INFO)
+      return
+    end
+
+    local cfg = require("codereview.config").get()
+    local provider_name = cfg.ai and cfg.ai.provider or "claude_cli"
+    local spinner = require("codereview.ui.spinner")
+
+    if not state._solve_pending then state._solve_pending = 0 end
+
+    local function dec_spinner()
+      state._solve_pending = (state._solve_pending or 1) - 1
+      if state._solve_pending <= 0 then
+        state._solve_pending = 0
+        spinner.stop()
+      end
+    end
+
+    local function open_result_float(content, title)
+      local lines = vim.split(content, "\n")
+      local buf = vim.api.nvim_create_buf(false, true)
+      vim.bo[buf].buftype = "nofile"
+      vim.bo[buf].bufhidden = "wipe"
+      vim.bo[buf].filetype = "markdown"
+      vim.bo[buf].modifiable = true
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+      vim.bo[buf].modifiable = false
+      local width = math.min(100, math.floor(vim.o.columns * 0.8))
+      local height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8))
+      local win = vim.api.nvim_open_win(buf, true, {
+        relative = "editor", width = width, height = height,
+        row = math.floor((vim.o.lines - height) / 2),
+        col = math.floor((vim.o.columns - width) / 2),
+        style = "minimal", border = "rounded",
+        title = " " .. (title or "AI: Solve Comments") .. " ", title_pos = "center",
+      })
+      vim.wo[win].wrap = true
+      local function close()
+        if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+      end
+      vim.keymap.set("n", "q", close, { buffer = buf, noremap = true, silent = true })
+      vim.keymap.set("n", "<Esc>", close, { buffer = buf, noremap = true, silent = true })
+    end
+
+    -- Group items by file so we can do one Copilot call per file
+    local files_order = {}
+    local by_file = {}
+    for _, item in ipairs(items) do
+      if not by_file[item.file] then
+        by_file[item.file] = {}
+        table.insert(files_order, item.file)
+      end
+      table.insert(by_file[item.file], item)
+    end
+
+    local total_files = #files_order
+    vim.notify(
+      string.format("Solving %d comment(s) across %d file(s)…", #items, total_files),
+      vim.log.levels.INFO
+    )
+
+    if provider_name == "copilot_cli" then
+      local pcfg = cfg.ai.copilot_cli or {}
+      local copilot_cmd = pcfg.cmd or "copilot"
+
+      -- One agent call per file
+      for _, file in ipairs(files_order) do
+        local file_items = by_file[file]
+        local first = file_items[1]
+
+        local prompt_parts = {
+          string.format("Fix the following code review comments in `%s`.", first.abs_path),
+          "",
+        }
+
+        for idx, item in ipairs(file_items) do
+          table.insert(prompt_parts, string.format("## Comment %d (from %s, line %s)", idx, item.author, tostring(item.line_nr or "?")))
+          table.insert(prompt_parts, item.body)
+          -- Include ±10 lines of context around each comment
+          if item.line_nr then
+            local all_lines = vim.fn.readfile(item.abs_path)
+            if #all_lines > 0 then
+              local s = math.max(1, item.line_nr - 10)
+              local e = math.min(#all_lines, item.line_nr + 10)
+              local ctx = {}
+              for i = s, e do
+                local pfx = i == item.line_nr and "→ " or "  "
+                table.insert(ctx, string.format("%s%4d: %s", pfx, i, all_lines[i]))
+              end
+              table.insert(prompt_parts, "```" .. item.ext)
+              table.insert(prompt_parts, table.concat(ctx, "\n"))
+              table.insert(prompt_parts, "```")
+            end
+          end
+          table.insert(prompt_parts, "")
+        end
+
+        table.insert(prompt_parts, "Apply the minimal fixes for ALL of the above comments directly to the file. Do not ask for confirmation.")
+        table.insert(prompt_parts, "")
+        table.insert(prompt_parts, "After applying all fixes, output a git commit message in this exact format:")
+        table.insert(prompt_parts, "COMMIT_SUBJECT: <one-line subject, conventional commits style, max 72 chars>")
+        table.insert(prompt_parts, "COMMIT_BODY:")
+        table.insert(prompt_parts, "<body explaining what changed and why, 2-4 sentences>")
+        table.insert(prompt_parts, "END_COMMIT")
+
+        local agent_prompt = table.concat(prompt_parts, "\n")
+        local cmd = {
+          copilot_cmd, "--silent", "--no-auto-update",
+          "-p", agent_prompt,
+          "--allow-tool=write",
+          "--allow-tool=shell(git add:*)",
+          "--allow-tool=shell(git commit:*)",
+          "--add-dir", root,
+        }
+        if pcfg.model and pcfg.model ~= "" then
+          table.insert(cmd, "--model")
+          table.insert(cmd, pcfg.model)
+        end
+
+        state._solve_pending = state._solve_pending + 1
+        spinner.start(string.format(" Solving %d/%d files… ", #files_order - state._solve_pending + 1, total_files))
+
+        local stdout_chunks, stderr_chunks = {}, {}
+        local abs_path = first.abs_path
+        local basename = first.basename
+        vim.fn.jobstart(cmd, {
+          cwd = root,
+          stdout_buffered = true, stderr_buffered = true,
+          on_stdout = function(_, data)
+            if data then
+              for _, c in ipairs(data) do if c ~= "" then table.insert(stdout_chunks, c) end end
+            end
+          end,
+          on_stderr = function(_, data)
+            if data then
+              for _, c in ipairs(data) do if c ~= "" then table.insert(stderr_chunks, c) end end
+            end
+          end,
+          on_exit = function(_, code)
+            vim.schedule(function()
+              dec_spinner()
+              local output = table.concat(stdout_chunks, "\n")
+              if code == 0 then
+                local copilot_subject = output:match("COMMIT_SUBJECT:%s*([^\n]+)")
+                local copilot_body = output:match("COMMIT_BODY:\n(.-)\nEND_COMMIT")
+                if copilot_subject then copilot_subject = vim.trim(copilot_subject) end
+                if copilot_body then copilot_body = vim.trim(copilot_body) end
+
+                vim.notify(string.format("✓ Copilot applied fixes to %s", basename), vim.log.levels.INFO)
+
+                local display_output = output:gsub("\nCOMMIT_SUBJECT:.-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:.-END_COMMIT\n?", "")
+                display_output = vim.trim(display_output)
+
+                local subject = copilot_subject and copilot_subject ~= "" and copilot_subject
+                  or string.format("fix(%s): address %d review comment(s)", basename, #file_items)
+                local body = copilot_body or ""
+
+                vim.ui.input({ prompt = "Commit message: ", default = subject }, function(msg)
+                  if not msg or vim.trim(msg) == "" then return end
+                  local full_msg = body ~= "" and (msg .. "\n\n" .. body) or msg
+                  vim.fn.jobstart({ "git", "add", abs_path }, {
+                    cwd = root,
+                    on_exit = function(_, add_code)
+                      vim.schedule(function()
+                        if add_code ~= 0 then
+                          vim.notify("git add failed", vim.log.levels.ERROR)
+                          return
+                        end
+                        vim.fn.jobstart({ "git", "commit", "-m", full_msg }, {
+                          cwd = root,
+                          on_exit = function(_, commit_code)
+                            vim.schedule(function()
+                              if commit_code == 0 then
+                                vim.notify("Committed: " .. msg, vim.log.levels.INFO)
+                              else
+                                vim.notify("git commit failed (exit " .. commit_code .. ")", vim.log.levels.ERROR)
+                              end
+                            end)
+                          end,
+                        })
+                      end)
+                    end,
+                  })
+                end)
+
+                if display_output ~= "" then
+                  open_result_float(display_output, string.format("Copilot: %s", basename))
+                end
+              else
+                local stderr_str = table.concat(stderr_chunks, "\n")
+                local msg = output ~= "" and output or stderr_str
+                vim.notify(string.format("Copilot solve failed for %s (exit %d)", basename, code), vim.log.levels.ERROR)
+                if msg ~= "" then open_result_float(msg, "Copilot: Error — " .. basename) end
+              end
+            end)
+          end,
+        })
+      end
+    else
+      -- Fallback: run solve_comment sequentially for each item (fire one provider call each)
+      local ok, provider = pcall(require("codereview.ai.providers").get)
+      if not ok then
+        vim.notify("AI not configured: " .. tostring(provider), vim.log.levels.ERROR)
+        return
+      end
+
+      for _, item in ipairs(items) do
+        state._solve_pending = state._solve_pending + 1
+        spinner.start(string.format(" Solving comments… "))
+
+        local prompt_parts = {
+          "You are helping a developer fix a code review comment.",
+          "", "## Review Comment",
+          "Author: " .. item.author,
+          "File: " .. item.file,
+          item.line_nr and ("Line: " .. item.line_nr) or "",
+          "", item.body, "",
+          "## Task", "Produce the minimal fix.",
+          "",
+          string.format("Output a unified diff for `%s` in a ```diff fenced block (git apply format).", item.file),
+          "After the diff block, briefly explain what changed.",
+          "If no diff applies, output only the explanation.",
+        }
+        local prompt = table.concat(prompt_parts, "\n")
+
+        provider.run(prompt, function(output, err)
+          dec_spinner()
+          if err or not output or output == "" then
+            vim.notify("AI solve failed for " .. item.basename .. ": " .. (err or "no output"), vim.log.levels.ERROR)
+            return
+          end
+          local diff_block = output:match("```diff%s*\n(.+)\n```")
+          if not diff_block then
+            open_result_float(output, "AI: " .. item.basename .. " (no diff)")
+            return
+          end
+          local stderr_chunks = {}
+          local apply_job = vim.fn.jobstart({ "git", "apply", "-" }, {
+            cwd = root, stdout_buffered = true, stderr_buffered = true,
+            on_stderr = function(_, data)
+              if data then for _, c in ipairs(data) do if c ~= "" then table.insert(stderr_chunks, c) end end end
+            end,
+            on_exit = function(_, code)
+              vim.schedule(function()
+                if code == 0 then
+                  vim.notify("✓ Fix applied to " .. item.basename, vim.log.levels.INFO)
+                else
+                  vim.notify("git apply failed for " .. item.basename .. ": " .. table.concat(stderr_chunks, " "), vim.log.levels.WARN)
+                  open_result_float(output, "AI: " .. item.basename .. " (apply failed)")
+                end
+              end)
+            end,
+          })
+          if apply_job > 0 then
+            vim.fn.chansend(apply_job, diff_block)
+            vim.fn.chanclose(apply_job, "stdin")
+          end
+        end)
+      end
+    end
+  end
+
   -- ── Main buffer callbacks (all 26 remappable actions) ───────────────────────
 
   local main_callbacks = {
@@ -2528,6 +2841,17 @@ function M.setup_keymaps(state, layout, active_states)
         vim.fn.chanclose(apply_job, "stdin")
       end)
     end,
+
+    solve_file_comments = function()
+      local items, root = collect_file_discs()
+      solve_discussions(items, root)
+    end,
+
+    solve_all_comments = function()
+      local items, root = collect_all_discs()
+      solve_discussions(items, root)
+    end,
+
     next_commit = function()
       nav_commit(-1)
     end,
@@ -2580,6 +2904,9 @@ function M.setup_keymaps(state, layout, active_states)
 
   km.apply(main_buf, main_callbacks)
 
+  -- Store callbacks for programmatic access (e.g. from user commands via init.lua)
+  active_states[main_buf].callbacks = main_callbacks
+
   -- ── Sidebar buffer callbacks (subset of actions that apply to sidebar) ───────
 
   local sidebar_callbacks = {
@@ -2629,6 +2956,8 @@ function M.setup_keymaps(state, layout, active_states)
     copy_comment = main_callbacks.copy_comment,
     pipe_comment = main_callbacks.pipe_comment,
     solve_comment = main_callbacks.solve_comment,
+    solve_file_comments = main_callbacks.solve_file_comments,
+    solve_all_comments = main_callbacks.solve_all_comments,
     open_file = main_callbacks.open_file,
     refresh = refresh,
     quit = quit,

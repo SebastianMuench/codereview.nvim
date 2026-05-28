@@ -38,6 +38,8 @@ local M = {}
 ---@field copy_comment? codereview.keymap.Key
 ---@field pipe_comment? codereview.keymap.Key
 ---@field solve_comment? codereview.keymap.Key
+---@field solve_file_comments? codereview.keymap.Key
+---@field solve_all_comments? codereview.keymap.Key
 ---@field open_file? codereview.keymap.Key
 
 local defaults = {
@@ -80,6 +82,8 @@ local defaults = {
   copy_comment = { key = "yc", mode = "n", desc = "Copy comment to clipboard" },
   pipe_comment = { key = "ya", mode = "n", desc = "Pipe comment to AI" },
   solve_comment = { key = "sc", mode = "n", desc = "Solve comment with AI" },
+  solve_file_comments = { key = "sf", mode = "n", desc = "Solve all comments in file" },
+  solve_all_comments = { key = "sC", mode = "n", desc = "Solve all PR comments" },
   open_file = { key = "<leader>gf", mode = "n", desc = "Open file in editor" },
 }
 
