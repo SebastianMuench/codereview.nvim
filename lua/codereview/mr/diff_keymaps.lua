@@ -2110,7 +2110,12 @@ function M.setup_keymaps(state, layout, active_states)
         and new_path ~= "/dev/null"
         and vim.fn.filereadable(git_root .. "/" .. new_path) == 1
       local file = new_path_valid and new_path or old_path or ""
-      local line_nr = new_path_valid and pos.new_line or pos.old_line
+      local line_nr
+      if new_path_valid then
+        line_nr = pos.new_line
+      else
+        line_nr = pos.old_line
+      end
       local comment_body = note.body or ""
       local author = note.author or "reviewer"
 
@@ -2129,13 +2134,8 @@ function M.setup_keymaps(state, layout, active_states)
       if line_nr then
         local start_line = math.max(1, line_nr - 20)
         local end_line = line_nr + 20
-        local f = io.open(abs_path, "r")
-        if f then
-          local all_lines = {}
-          for l in f:lines() do
-            table.insert(all_lines, l)
-          end
-          f:close()
+        local all_lines = vim.fn.readfile(abs_path)
+        if #all_lines > 0 then
           for i = start_line, math.min(end_line, #all_lines) do
             local prefix = i == line_nr and "→ " or "  "
             table.insert(context_lines, string.format("%s%4d: %s", prefix, i, all_lines[i]))
