@@ -54,3 +54,11 @@ end, { desc = "Toggle scroll/per-file mode" })
 vim.api.nvim_create_user_command("CodeReviewPlan", function(opts)
   require("codereview").plan(opts.args ~= "" and opts.args or nil)
 end, { nargs = "?", desc = "Generate implementation plan from current branch" })
+
+vim.api.nvim_create_user_command("CodeReviewSolveFile", function()
+  require("codereview").solve_file_comments()
+end, { desc = "Solve all open comments in the current file with AI" })
+
+vim.api.nvim_create_user_command("CodeReviewSolveAll", function()
+  require("codereview").solve_all_comments()
+end, { desc = "Solve all open PR comments with AI" })

@@ -13,6 +13,12 @@ function M.get_state(buf)
   return active_states[buf]
 end
 
+function M.get_any_active()
+  for _, entry in pairs(active_states) do
+    return entry
+  end
+end
+
 --- Close all active review layouts (used when switching to a different review).
 function M.close_active()
   local split = require("codereview.ui.split")

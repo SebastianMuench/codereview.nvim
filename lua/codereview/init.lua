@@ -180,4 +180,28 @@ function M.plan(base_arg)
   require("codereview.plan").start(base_arg)
 end
 
+local function invoke_solve_action(action_name)
+  local diff_mod = require("codereview.mr.diff")
+  local buf = vim.api.nvim_get_current_buf()
+  local active = diff_mod.get_state(buf) or diff_mod.get_any_active()
+  if not active then
+    vim.notify("No active code review", vim.log.levels.WARN)
+    return
+  end
+  local cb = active.callbacks and active.callbacks[action_name]
+  if not cb then
+    vim.notify("Action not available", vim.log.levels.WARN)
+    return
+  end
+  cb()
+end
+
+function M.solve_file_comments()
+  invoke_solve_action("solve_file_comments")
+end
+
+function M.solve_all_comments()
+  invoke_solve_action("solve_all_comments")
+end
+
 return M
