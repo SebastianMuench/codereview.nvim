@@ -384,6 +384,7 @@ function M.build(disc, opts)
     local k_react = km.get("react") or "rr"
     local k_copy = km.get("copy_comment") or "yc"
     local k_pipe = km.get("pipe_comment") or "ya"
+    local k_solve = km.get("solve_comment") or "sc"
     if disc.is_draft then
       footer_content = k_delete .. ":delete"
     elseif sel_note and current_user and sel_note.author == current_user then
@@ -400,7 +401,9 @@ function M.build(disc, opts)
         .. k_copy
         .. ":copy  "
         .. k_pipe
-        .. ":ai"
+        .. ":ai  "
+        .. k_solve
+        .. ":solve"
     else
       footer_content = k_reply
         .. ":reply  "
@@ -411,7 +414,9 @@ function M.build(disc, opts)
         .. k_copy
         .. ":copy  "
         .. k_pipe
-        .. ":ai"
+        .. ":ai  "
+        .. k_solve
+        .. ":solve"
     end
   end
 

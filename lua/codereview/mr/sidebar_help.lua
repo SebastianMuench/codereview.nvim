@@ -76,6 +76,7 @@ function M.build_lines()
       { action = "open_file", desc = "Open file in editor" },
       { action = "copy_comment", desc = "Copy comment" },
       { action = "pipe_comment", desc = "Pipe comment to AI" },
+      { action = "solve_comment", desc = "Solve comment with AI" },
       { action = "refresh", desc = "Refresh" },
       { action = "quit", desc = "Quit" },
     },

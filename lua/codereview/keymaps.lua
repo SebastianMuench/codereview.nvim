@@ -37,6 +37,7 @@ local M = {}
 ---@field pick_commits? codereview.keymap.Key
 ---@field copy_comment? codereview.keymap.Key
 ---@field pipe_comment? codereview.keymap.Key
+---@field solve_comment? codereview.keymap.Key
 ---@field open_file? codereview.keymap.Key
 
 local defaults = {
@@ -78,6 +79,7 @@ local defaults = {
   pick_commits = { key = "C", mode = "n", desc = "Pick commit" },
   copy_comment = { key = "yc", mode = "n", desc = "Copy comment to clipboard" },
   pipe_comment = { key = "ya", mode = "n", desc = "Pipe comment to AI" },
+  solve_comment = { key = "sc", mode = "n", desc = "Solve comment with AI" },
   open_file = { key = "<leader>gf", mode = "n", desc = "Open file in editor" },
 }
 

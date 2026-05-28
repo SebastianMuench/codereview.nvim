@@ -2094,6 +2094,440 @@ function M.setup_keymaps(state, layout, active_states)
         vim.notify("Comment copied to clipboard (configure hooks.pipe_comment to pipe to AI)", vim.log.levels.INFO)
       end
     end,
+    solve_comment = function()
+      if not layout.main_win or not vim.api.nvim_win_is_valid(layout.main_win) then return end
+      local disc = get_cursor_disc() or get_summary_disc()
+      if not disc or not disc.notes or not disc.notes[1] then
+        vim.notify("No comment at cursor", vim.log.levels.WARN)
+        return
+      end
+      local note = disc.notes[1]
+      local pos = note.position or {}
+      local new_path = pos.new_path
+      local old_path = pos.old_path
+      local git_root = require("codereview.git").get_repo_root()
+      local new_path_valid = new_path
+        and new_path ~= "/dev/null"
+        and vim.fn.filereadable(git_root .. "/" .. new_path) == 1
+      local file = new_path_valid and new_path or old_path or ""
+      local line_nr = new_path_valid and pos.new_line or pos.old_line
+      local comment_body = note.body or ""
+      local author = note.author or "reviewer"
+
+      if file == "" then
+        vim.notify("Comment has no file position", vim.log.levels.WARN)
+        return
+      end
+
+      local root = git_root
+      local abs_path = root .. "/" .. file
+      local basename = file:match("([^/]+)$") or file
+      local ext = file:match("%.([^%.]+)$") or ""
+
+      -- Read ±20 lines of real file context around the commented line
+      local context_lines = {}
+      if line_nr then
+        local start_line = math.max(1, line_nr - 20)
+        local end_line = line_nr + 20
+        local f = io.open(abs_path, "r")
+        if f then
+          local all_lines = {}
+          for l in f:lines() do
+            table.insert(all_lines, l)
+          end
+          f:close()
+          for i = start_line, math.min(end_line, #all_lines) do
+            local prefix = i == line_nr and "→ " or "  "
+            table.insert(context_lines, string.format("%s%4d: %s", prefix, i, all_lines[i]))
+          end
+        end
+      end
+
+      -- Build prompt requesting a unified diff + brief explanation
+      local prompt_parts = {
+        "You are helping a developer fix a code review comment.",
+        "",
+        "## Review Comment",
+        string.format("Author: %s", author),
+        string.format("File: %s", file),
+        line_nr and string.format("Line: %d", line_nr) or "",
+        "",
+        comment_body,
+        "",
+      }
+      if #context_lines > 0 then
+        table.insert(prompt_parts, "## Code Context")
+        table.insert(prompt_parts, "```" .. ext)
+        table.insert(prompt_parts, table.concat(context_lines, "\n"))
+        table.insert(prompt_parts, "```")
+        table.insert(prompt_parts, "(→ marks the commented line)")
+        table.insert(prompt_parts, "")
+      end
+      table.insert(prompt_parts, "## Task")
+      table.insert(
+        prompt_parts,
+        "Produce the minimal fix for this review comment."
+      )
+      table.insert(prompt_parts, "")
+      table.insert(
+        prompt_parts,
+        string.format(
+          "Output a unified diff for `%s` in a ```diff fenced block that can be applied with `git apply`.",
+          file
+        )
+      )
+      table.insert(
+        prompt_parts,
+        "The diff must use the real file path in the a/... and b/... headers."
+      )
+      table.insert(
+        prompt_parts,
+        "After the diff block, add a brief explanation of what you changed and why."
+      )
+      table.insert(
+        prompt_parts,
+        "If the change cannot be expressed as a diff (e.g. the comment is informational only), output only the explanation and no diff block."
+      )
+      local prompt = table.concat(prompt_parts, "\n")
+
+      -- Non-blocking: use corner spinner; track concurrent solve count
+      local spinner = require("codereview.ui.spinner")
+      if not state._solve_pending then
+        state._solve_pending = 0
+      end
+      state._solve_pending = state._solve_pending + 1
+      spinner.start(" Solving comment… ")
+
+      local cfg = require("codereview.config").get()
+      local provider_name = cfg.ai and cfg.ai.provider or "claude_cli"
+
+      local function dec_spinner()
+        state._solve_pending = (state._solve_pending or 1) - 1
+        if state._solve_pending <= 0 then
+          state._solve_pending = 0
+          spinner.stop()
+        end
+      end
+
+      local function open_result_float(content, title)
+        local lines = vim.split(content, "\n")
+        local buf = vim.api.nvim_create_buf(false, true)
+        vim.bo[buf].buftype = "nofile"
+        vim.bo[buf].bufhidden = "wipe"
+        vim.bo[buf].filetype = "markdown"
+        vim.bo[buf].modifiable = true
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+        vim.bo[buf].modifiable = false
+        local width = math.min(100, math.floor(vim.o.columns * 0.8))
+        local height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8))
+        local win = vim.api.nvim_open_win(buf, true, {
+          relative = "editor",
+          width = width,
+          height = height,
+          row = math.floor((vim.o.lines - height) / 2),
+          col = math.floor((vim.o.columns - width) / 2),
+          style = "minimal",
+          border = "rounded",
+          title = " " .. (title or "AI: Solve Comment") .. " ",
+          title_pos = "center",
+        })
+        vim.wo[win].wrap = true
+        local function close()
+          if vim.api.nvim_win_is_valid(win) then
+            vim.api.nvim_win_close(win, true)
+          end
+        end
+        vim.keymap.set("n", "q", close, { buffer = buf, noremap = true, silent = true })
+        vim.keymap.set("n", "<Esc>", close, { buffer = buf, noremap = true, silent = true })
+      end
+
+      -- Build a rich commit message from the review comment and optional AI summary.
+      -- Subject: first sentence of the comment (≤72 chars), scope = basename.
+      -- Body: full comment + AI summary if available.
+      local function build_commit_msg(ai_summary)
+        -- Derive a short subject from the review comment body
+        local first_line = comment_body:match("^([^\n]+)") or comment_body
+        first_line = vim.trim(first_line)
+        -- Strip markdown emphasis/code chars for a clean subject
+        first_line = first_line:gsub("[`*_]", "")
+        local max_subject = 72 - #string.format("fix(%s): ", basename)
+        if #first_line > max_subject then
+          first_line = first_line:sub(1, max_subject - 1) .. "…"
+        end
+        local subject = string.format("fix(%s): %s", basename, first_line)
+
+        -- Build body
+        local body_parts = {
+          string.format("Addresses review comment from %s:", author),
+          "",
+          comment_body,
+        }
+        if ai_summary and ai_summary ~= "" then
+          -- Take first non-empty paragraph of AI output as the summary
+          local summary_line = ai_summary:match("^([^\n]+)") or ""
+          summary_line = vim.trim(summary_line)
+          if summary_line ~= "" then
+            table.insert(body_parts, "")
+            table.insert(body_parts, "AI fix: " .. summary_line)
+          end
+        end
+        return subject, table.concat(body_parts, "\n")
+      end
+
+      local function offer_commit(ai_summary)
+        local subject, body = build_commit_msg(ai_summary)
+        vim.ui.input({ prompt = "Commit message: ", default = subject }, function(msg)
+          if not msg or vim.trim(msg) == "" then
+            return
+          end
+          -- Use the body as the extended commit message
+          local full_msg = msg .. "\n\n" .. body
+          vim.fn.jobstart({ "git", "add", abs_path }, {
+            cwd = root,
+            on_exit = function(_, add_code)
+              vim.schedule(function()
+                if add_code ~= 0 then
+                  vim.notify("git add failed", vim.log.levels.ERROR)
+                  return
+                end
+                vim.fn.jobstart({ "git", "commit", "-m", full_msg }, {
+                  cwd = root,
+                  on_exit = function(_, code)
+                    vim.schedule(function()
+                      if code == 0 then
+                        vim.notify("Committed: " .. msg, vim.log.levels.INFO)
+                      else
+                        vim.notify("git commit failed (exit " .. code .. ")", vim.log.levels.ERROR)
+                      end
+                    end)
+                  end,
+                })
+              end)
+            end,
+          })
+        end)
+      end
+
+      -- When using copilot_cli: use its agentic `-p` mode so Copilot edits the
+      -- file directly instead of us trying to parse and apply a diff.
+      if provider_name == "copilot_cli" then
+        local pcfg = cfg.ai.copilot_cli or {}
+        local copilot_cmd = pcfg.cmd or "copilot"
+
+        -- Build a concise agentic prompt referencing the real file path
+        local agent_prompt_parts = {
+          string.format("Fix the following code review comment in `%s`.", abs_path),
+          "",
+          "## Review Comment",
+          string.format("Author: %s", author),
+          line_nr and string.format("File: %s line %d", abs_path, line_nr) or string.format("File: %s", abs_path),
+          "",
+          comment_body,
+        }
+        if #context_lines > 0 then
+          table.insert(agent_prompt_parts, "")
+          table.insert(agent_prompt_parts, "## Current code around the commented line")
+          table.insert(agent_prompt_parts, "```" .. ext)
+          table.insert(agent_prompt_parts, table.concat(context_lines, "\n"))
+          table.insert(agent_prompt_parts, "```")
+          table.insert(agent_prompt_parts, "(→ marks the commented line)")
+        end
+        table.insert(agent_prompt_parts, "")
+        table.insert(agent_prompt_parts, "Apply the minimal fix directly to the file. Do not ask for confirmation.")
+        table.insert(agent_prompt_parts, "")
+        table.insert(agent_prompt_parts, "After applying the fix, output a git commit message for the change in this exact format:")
+        table.insert(agent_prompt_parts, "COMMIT_SUBJECT: <one-line subject, conventional commits style, max 72 chars>")
+        table.insert(agent_prompt_parts, "COMMIT_BODY:")
+        table.insert(agent_prompt_parts, "<body explaining what changed and why, 2-3 sentences max>")
+        table.insert(agent_prompt_parts, "END_COMMIT")
+        local agent_prompt = table.concat(agent_prompt_parts, "\n")
+
+        local cmd = {
+          copilot_cmd,
+          "--silent",
+          "--no-auto-update",
+          "-p", agent_prompt,
+          "--allow-tool=write",
+          "--allow-tool=shell(git add:*)",
+          "--allow-tool=shell(git commit:*)",
+          "--add-dir", root,
+        }
+        if pcfg.model and pcfg.model ~= "" then
+          table.insert(cmd, "--model")
+          table.insert(cmd, pcfg.model)
+        end
+
+        local stdout_chunks = {}
+        local stderr_chunks = {}
+        vim.fn.jobstart(cmd, {
+          cwd = root,
+          stdout_buffered = true,
+          stderr_buffered = true,
+          on_stdout = function(_, data)
+            if data then
+              for _, chunk in ipairs(data) do
+                if chunk ~= "" then table.insert(stdout_chunks, chunk) end
+              end
+            end
+          end,
+          on_stderr = function(_, data)
+            if data then
+              for _, chunk in ipairs(data) do
+                if chunk ~= "" then table.insert(stderr_chunks, chunk) end
+              end
+            end
+          end,
+          on_exit = function(_, code)
+            vim.schedule(function()
+              dec_spinner()
+              local output = table.concat(stdout_chunks, "\n")
+              if code == 0 then
+                -- Parse commit message Copilot wrote
+                local copilot_subject = output:match("COMMIT_SUBJECT:%s*([^\n]+)")
+                local copilot_body = output:match("COMMIT_BODY:\n(.-)\nEND_COMMIT")
+                if copilot_subject then
+                  copilot_subject = vim.trim(copilot_subject)
+                end
+                if copilot_body then
+                  copilot_body = vim.trim(copilot_body)
+                end
+
+                vim.notify(string.format("✓ Copilot applied fix to %s", basename), vim.log.levels.INFO)
+
+                -- Strip the commit block from display output
+                local display_output = output:gsub("\nCOMMIT_SUBJECT:.-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:.-END_COMMIT\n?", "")
+                display_output = vim.trim(display_output)
+
+                -- Build the prefill: Copilot's subject if available, else derived from comment
+                local subject, body
+                if copilot_subject and copilot_subject ~= "" then
+                  subject = copilot_subject
+                  body = copilot_body or build_commit_msg(display_output)
+                else
+                  subject, body = build_commit_msg(display_output)
+                end
+
+                vim.ui.input({ prompt = "Commit message: ", default = subject }, function(msg)
+                  if not msg or vim.trim(msg) == "" then
+                    return
+                  end
+                  local full_msg = msg
+                  if body and body ~= "" then
+                    full_msg = msg .. "\n\n" .. body
+                  end
+                  vim.fn.jobstart({ "git", "add", abs_path }, {
+                    cwd = root,
+                    on_exit = function(_, add_code)
+                      vim.schedule(function()
+                        if add_code ~= 0 then
+                          vim.notify("git add failed", vim.log.levels.ERROR)
+                          return
+                        end
+                        vim.fn.jobstart({ "git", "commit", "-m", full_msg }, {
+                          cwd = root,
+                          on_exit = function(_, commit_code)
+                            vim.schedule(function()
+                              if commit_code == 0 then
+                                vim.notify("Committed: " .. msg, vim.log.levels.INFO)
+                              else
+                                vim.notify("git commit failed (exit " .. commit_code .. ")", vim.log.levels.ERROR)
+                              end
+                            end)
+                          end,
+                        })
+                      end)
+                    end,
+                  })
+                end)
+
+                if display_output ~= "" then
+                  open_result_float(display_output, "Copilot: Fix Summary")
+                end
+              else
+                local stderr_str = table.concat(stderr_chunks, "\n")
+                local msg = output ~= "" and output or stderr_str
+                vim.notify(
+                  string.format("Copilot solve failed (exit %d)", code),
+                  vim.log.levels.ERROR
+                )
+                if msg ~= "" then
+                  open_result_float(msg, "Copilot: Error")
+                end
+              end
+            end)
+          end,
+        })
+        return
+      end
+
+      -- Fallback for non-copilot providers: ask for a unified diff and apply it
+      local ok, provider = pcall(require("codereview.ai.providers").get)
+      if not ok then
+        dec_spinner()
+        vim.notify("AI not configured: " .. tostring(provider), vim.log.levels.ERROR)
+        return
+      end
+
+      provider.run(prompt, function(output, err)
+        dec_spinner()
+
+        if err or not output or output == "" then
+          vim.notify("AI solve failed: " .. (err or "no output"), vim.log.levels.ERROR)
+          return
+        end
+
+        -- Extract the ```diff block (greedy to handle multi-hunk diffs)
+        local diff_block = output:match("```diff%s*\n(.+)\n```")
+        -- Extract explanation: everything after the last ``` closing fence
+        local explanation = output:match("```[^\n]*\n.+\n```%s*\n(.*)")
+        if explanation then
+          explanation = vim.trim(explanation)
+        end
+
+        if not diff_block or diff_block == "" then
+          open_result_float(output, "AI: Solve Comment (no diff)")
+          return
+        end
+
+        local stderr_chunks = {}
+        local apply_job = vim.fn.jobstart({ "git", "apply", "-" }, {
+          cwd = root,
+          stdout_buffered = true,
+          stderr_buffered = true,
+          on_stderr = function(_, data)
+            if data then
+              for _, chunk in ipairs(data) do
+                if chunk ~= "" then table.insert(stderr_chunks, chunk) end
+              end
+            end
+          end,
+          on_exit = function(_, code)
+            vim.schedule(function()
+              if code == 0 then
+                vim.notify(string.format("✓ Fix applied to %s", basename), vim.log.levels.INFO)
+                offer_commit(explanation)
+              else
+                local stderr_str = table.concat(stderr_chunks, "\n")
+                vim.notify(
+                  "git apply failed — showing AI suggestion for manual application"
+                    .. (stderr_str ~= "" and (": " .. stderr_str) or ""),
+                  vim.log.levels.WARN
+                )
+                open_result_float(output, "AI: Solve Comment (apply failed)")
+              end
+            end)
+          end,
+        })
+
+        if apply_job <= 0 then
+          vim.notify("Failed to start git apply", vim.log.levels.ERROR)
+          open_result_float(output, "AI: Solve Comment")
+          return
+        end
+        vim.fn.chansend(apply_job, diff_block)
+        vim.fn.chanclose(apply_job, "stdin")
+      end)
+    end,
     next_commit = function()
       nav_commit(-1)
     end,
@@ -2135,7 +2569,10 @@ function M.setup_keymaps(state, layout, active_states)
 
       -- Open as a vsplit next to the diff in the review tab
       vim.api.nvim_set_current_win(layout.main_win)
-      vim.cmd(string.format("vsplit +%d %s", line_nr, vim.fn.fnameescape(abs_path)))
+      local ok, err = pcall(vim.cmd, string.format("vsplit +%d %s", line_nr, vim.fn.fnameescape(abs_path)))
+      if not ok then
+        vim.notify("Could not open file: " .. tostring(err), vim.log.levels.ERROR)
+      end
     end,
     refresh = refresh,
     quit = quit,
@@ -2191,6 +2628,7 @@ function M.setup_keymaps(state, layout, active_states)
     submit = main_callbacks.submit,
     copy_comment = main_callbacks.copy_comment,
     pipe_comment = main_callbacks.pipe_comment,
+    solve_comment = main_callbacks.solve_comment,
     open_file = main_callbacks.open_file,
     refresh = refresh,
     quit = quit,
