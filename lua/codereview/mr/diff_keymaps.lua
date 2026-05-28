@@ -485,6 +485,12 @@ function M.setup_keymaps(state, layout, active_states)
           and vim.fn.filereadable(root .. "/" .. new_path) == 1
         local file = new_path_valid and new_path or old_path or ""
         if file ~= "" then
+          local item_line_nr
+          if new_path_valid then
+            item_line_nr = pos.new_line
+          else
+            item_line_nr = pos.old_line
+          end
           local item = {
             disc = disc,
             note = note,
@@ -492,7 +498,7 @@ function M.setup_keymaps(state, layout, active_states)
             abs_path = root .. "/" .. file,
             basename = file:match("([^/]+)$") or file,
             ext = file:match("%.([^%.]+)$") or "",
-            line_nr = new_path_valid and pos.new_line or pos.old_line,
+            line_nr = item_line_nr,
             author = note.author or "reviewer",
             body = note.body or "",
           }
@@ -599,7 +605,7 @@ function M.setup_keymaps(state, layout, active_states)
           table.insert(prompt_parts, item.body)
           -- Include ±10 lines of context around each comment
           if item.line_nr then
-            local all_lines = vim.fn.readfile(item.abs_path)
+            local all_lines = vim.fn.readfile(item.abs_path, "", item.line_nr + 10)
             if #all_lines > 0 then
               local s = math.max(1, item.line_nr - 10)
               local e = math.min(#all_lines, item.line_nr + 10)
@@ -663,13 +669,13 @@ function M.setup_keymaps(state, layout, active_states)
               local output = table.concat(stdout_chunks, "\n")
               if code == 0 then
                 local copilot_subject = output:match("COMMIT_SUBJECT:%s*([^\n]+)")
-                local copilot_body = output:match("COMMIT_BODY:\n(.-)\nEND_COMMIT")
+                local copilot_body = output:match("COMMIT_BODY:\n([%s%S]-)\nEND_COMMIT")
                 if copilot_subject then copilot_subject = vim.trim(copilot_subject) end
                 if copilot_body then copilot_body = vim.trim(copilot_body) end
 
                 vim.notify(string.format("✓ Copilot applied fixes to %s", basename), vim.log.levels.INFO)
 
-                local display_output = output:gsub("\nCOMMIT_SUBJECT:.-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:.-END_COMMIT\n?", "")
+                local display_output = output:gsub("\nCOMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
                 display_output = vim.trim(display_output)
 
                 local subject = copilot_subject and copilot_subject ~= "" and copilot_subject
@@ -750,7 +756,7 @@ function M.setup_keymaps(state, layout, active_states)
             vim.notify("AI solve failed for " .. item.basename .. ": " .. (err or "no output"), vim.log.levels.ERROR)
             return
           end
-          local diff_block = output:match("```diff%s*\n(.+)\n```")
+          local diff_block = output:match("```diff[^\n]*\n([%s%S]-)\n```")
           if not diff_block then
             open_result_float(output, "AI: " .. item.basename .. " (no diff)")
             return
@@ -2447,7 +2453,7 @@ function M.setup_keymaps(state, layout, active_states)
       if line_nr then
         local start_line = math.max(1, line_nr - 20)
         local end_line = line_nr + 20
-        local all_lines = vim.fn.readfile(abs_path)
+        local all_lines = vim.fn.readfile(abs_path, "", end_line)
         if #all_lines > 0 then
           for i = start_line, math.min(end_line, #all_lines) do
             local prefix = i == line_nr and "→ " or "  "
@@ -2697,7 +2703,7 @@ function M.setup_keymaps(state, layout, active_states)
               if code == 0 then
                 -- Parse commit message Copilot wrote
                 local copilot_subject = output:match("COMMIT_SUBJECT:%s*([^\n]+)")
-                local copilot_body = output:match("COMMIT_BODY:\n(.-)\nEND_COMMIT")
+                local copilot_body = output:match("COMMIT_BODY:\n([%s%S]-)\nEND_COMMIT")
                 if copilot_subject then
                   copilot_subject = vim.trim(copilot_subject)
                 end
@@ -2708,14 +2714,15 @@ function M.setup_keymaps(state, layout, active_states)
                 vim.notify(string.format("✓ Copilot applied fix to %s", basename), vim.log.levels.INFO)
 
                 -- Strip the commit block from display output
-                local display_output = output:gsub("\nCOMMIT_SUBJECT:.-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:.-END_COMMIT\n?", "")
+                local display_output = output:gsub("\nCOMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
                 display_output = vim.trim(display_output)
 
                 -- Build the prefill: Copilot's subject if available, else derived from comment
                 local subject, body
                 if copilot_subject and copilot_subject ~= "" then
                   subject = copilot_subject
-                  body = copilot_body or build_commit_msg(display_output)
+                  local _subj, fallback_body = build_commit_msg(display_output)
+                  body = copilot_body or fallback_body
                 else
                   subject, body = build_commit_msg(display_output)
                 end
@@ -2789,10 +2796,10 @@ function M.setup_keymaps(state, layout, active_states)
           return
         end
 
-        -- Extract the ```diff block (greedy to handle multi-hunk diffs)
-        local diff_block = output:match("```diff%s*\n(.+)\n```")
+        -- Extract the ```diff block ([%s%S] matches any char including newlines)
+        local diff_block = output:match("```diff[^\n]*\n([%s%S]-)\n```")
         -- Extract explanation: everything after the last ``` closing fence
-        local explanation = output:match("```[^\n]*\n.+\n```%s*\n(.*)")
+        local explanation = output:match("```[^\n]*\n[%s%S]-\n```%s*\n([%s%S]*)")
         if explanation then
           explanation = vim.trim(explanation)
         end
@@ -2885,7 +2892,7 @@ function M.setup_keymaps(state, layout, active_states)
       local line_nr = 1
       local cursor_row = vim.api.nvim_win_get_cursor(layout.main_win)[1]
       local line_data = state.scroll_mode and state.scroll_line_data
-        or (state.line_data_cache[state.current_file] or {})
+        or ((state.line_data_cache or {})[state.current_file] or {})
       local ld = line_data[cursor_row]
       if ld and ld.item then
         line_nr = ld.item.new_line or ld.item.old_line or 1
