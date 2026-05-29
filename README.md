@@ -28,6 +28,9 @@
 - **Threaded discussions** — view, reply, edit, delete, and resolve/unresolve comment threads
 - **Note selection** — cycle through notes in a thread with `<Tab>`/`<S-Tab>`, then edit or delete inline
 - **AI-powered review** — multi-provider support (Claude CLI, Anthropic API, OpenAI, Ollama, custom) with accept/dismiss/edit suggestions
+- **AI comment solving** — press `sc` to auto-fix a review comment: generates a unified diff, applies it via `git apply`, and offers a commit message; `sf` / `sC` solve all comments in the current file or the entire PR
+- **Copy & pipe comments** — `yc` copies a comment to the clipboard; `ya` pipes it to an AI tool via the `hooks.pipe_comment` callback (e.g., sidekick.nvim)
+- **Open file in editor** — `<leader>gf` opens the current file in a vsplit alongside the diff, jumping to the commented line
 - **Review sessions** — accumulate draft comments, submit in batch
 - **MR actions** — approve, merge, open in browser, create new MR/PR
 
@@ -63,6 +66,8 @@
     "CodeReviewFiles",
     "CodeReviewToggleScroll",
     "CodeReviewCommits",
+    "CodeReviewSolveFile",
+    "CodeReviewSolveAll",
   },
   ---@module "codereview"
   ---@type codereview.Config
@@ -142,6 +147,14 @@ require("codereview").setup({
   -- Open review in a new tab (set false to use current window)
   open_in_tab = true,
 
+  -- Lifecycle hooks
+  hooks = {
+    -- Called when the user presses `ya` (pipe comment to AI).
+    -- Receives { body, author, file, line } for the comment under the cursor.
+    -- If nil, the comment is copied to the clipboard instead.
+    pipe_comment = nil, -- fun(data: {body: string, author: string, file: string, line: integer|nil})
+  },
+
   -- Diff viewer
   diff = {
     context          = 8,     -- lines of context (0-20)
@@ -180,6 +193,26 @@ require("codereview").setup({
   keymaps = {
     -- quit = "q",              -- remap quit to q
     -- toggle_resolve = false,  -- disable toggle resolve
+  },
+})
+```
+
+### Hooks
+
+Hooks let you integrate codereview.nvim with other Neovim plugins. Configure them in the `hooks` table inside `setup()`.
+
+#### `hooks.pipe_comment`
+
+Called when the user presses `ya` (pipe comment to AI). Receives a table with the comment's body, author, file path, and line number. If not configured, `ya` falls back to copying the comment to the clipboard.
+
+```lua
+require("codereview").setup({
+  hooks = {
+    pipe_comment = function(data)
+      -- data: { body: string, author: string, file: string, line: integer|nil }
+      -- Example: forward to sidekick.nvim
+      require("sidekick").send(string.format("[%s:%s]\n%s", data.file, tostring(data.line or "?"), data.body))
+    end,
   },
 })
 ```
@@ -262,6 +295,11 @@ Patterns are comma-separated globs, merged with plugin config `ai.skip_patterns`
 | `x` | Delete selected note |
 | `rr` | React to note |
 | `R` | Toggle resolve / unresolve |
+| `yc` | Copy comment to clipboard |
+| `ya` | Pipe comment to AI (calls `hooks.pipe_comment`; falls back to clipboard) |
+| `sc` | Solve comment with AI (generates & applies a fix, offers commit message) |
+| `sf` | Solve all comments in current file with AI |
+| `sC` | Solve all PR/MR comments with AI |
 
 ### AI Suggestions
 
@@ -279,6 +317,7 @@ Patterns are comma-separated globs, merged with plugin config `ai.skip_patterns`
 | Key | Action |
 |-----|--------|
 | `<C-f>` | Toggle full file view |
+| `<leader>gf` | Open file in editor (vsplit alongside diff, at the cursor line) |
 
 ### Actions
 
@@ -312,7 +351,7 @@ keymaps = {
 },
 ```
 
-Available action names: `next_file`, `prev_file`, `next_commit`, `prev_commit`, `move_down`, `move_up`, `select_next_note`, `select_prev_note`, `create_comment`, `create_range_comment`, `accept_suggestion`, `dismiss_suggestion`, `edit_suggestion`, `reply`, `edit_note`, `delete_note`, `react`, `toggle_resolve`, `toggle_full_file`, `dismiss_all_suggestions`, `submit`, `approve`, `refresh`, `quit`, `open_in_browser`, `merge`, `show_pipeline`, `ai_review`, `ai_review_file`, `pick_comments`, `pick_files`, `pick_commits`.
+Available action names: `next_file`, `prev_file`, `next_commit`, `prev_commit`, `move_down`, `move_up`, `select_next_note`, `select_prev_note`, `create_comment`, `create_range_comment`, `accept_suggestion`, `dismiss_suggestion`, `edit_suggestion`, `reply`, `edit_note`, `delete_note`, `react`, `toggle_resolve`, `toggle_full_file`, `dismiss_all_suggestions`, `submit`, `approve`, `refresh`, `quit`, `open_in_browser`, `merge`, `show_pipeline`, `ai_review`, `ai_review_file`, `pick_comments`, `pick_files`, `pick_commits`, `copy_comment`, `pipe_comment`, `solve_comment`, `solve_file_comments`, `solve_all_comments`, `open_file`.
 
 ## Commands
 
@@ -330,6 +369,8 @@ Available action names: `next_file`, `prev_file`, `next_commit`, `prev_commit`, 
 | `:CodeReviewFiles` | Browse changed files |
 | `:CodeReviewToggleScroll` | Toggle scroll / per-file mode |
 | `:CodeReviewCommits` | Browse commits |
+| `:CodeReviewSolveFile` | Solve all open comments in the current file with AI |
+| `:CodeReviewSolveAll` | Solve all open PR/MR comments with AI |
 
 ## Supported Providers
 
