@@ -59,6 +59,8 @@ function M.create_state(opts)
     commit_filter = nil,
     original_files = nil,
     original_discussions = nil,
+    addressed_set = {},
+    show_addressed = false,
   }
 end
 
@@ -167,6 +169,39 @@ function M.load_diffs_into_state(state, files)
   state.local_drafts = state.local_drafts or {}
   state.row_selection = state.row_selection or {}
   state.current_file = 1
+end
+
+--- Return the discussions that should be rendered, based on the addressed filter.
+--- Addressed discussions are hidden when state.show_addressed == false.
+--- When show_addressed == true, addressed discussions are included with local_addressed = true
+--- so thread_virt_lines can render a badge.
+--- @param state table
+--- @return table  filtered (and optionally annotated) discussions list
+function M.visible_discussions(state)
+  local addressed_set = state.addressed_set or {}
+  if not next(addressed_set) then
+    return state.discussions
+  end
+  local show = state.show_addressed
+  local result = {}
+  for _, disc in ipairs(state.discussions or {}) do
+    local key = tostring(disc.id)
+    if addressed_set[key] then
+      if show then
+        -- Include but mark so the renderer can show a badge
+        local copy = {}
+        for k, v in pairs(disc) do
+          copy[k] = v
+        end
+        copy.local_addressed = true
+        table.insert(result, copy)
+      end
+      -- else: skip (hidden)
+    else
+      table.insert(result, disc)
+    end
+  end
+  return result
 end
 
 return M

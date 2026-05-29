@@ -564,6 +564,10 @@ function M.open(entry)
         state.last_reviewed_sha = sha
       end
 
+      -- Load locally-stored "addressed" flags for this MR
+      local addressed_mod = require("codereview.mr.addressed")
+      state.addressed_set = addressed_mod.get_set(pctx, rev)
+
       diff.render_sidebar(layout.sidebar_buf, state)
       diff.render_summary(layout.main_buf, state)
       diff.setup_keymaps(layout, state)

@@ -45,6 +45,11 @@ function M.setup_keymaps(state, layout, active_states)
 
   -- ── Local helper functions (must be defined before callbacks table) ──────────
 
+  -- Returns the discussions that should be rendered (respects show_addressed filter).
+  local function get_vis_discussions()
+    return diff_state.visible_discussions(state)
+  end
+
   -- Re-render discussions without re-fetching from API
   local function rerender_view_sync()
     local pending = state._pending_scroll
@@ -57,7 +62,7 @@ function M.setup_keymaps(state, layout, active_states)
         layout.main_buf,
         state.files,
         state.review,
-        state.discussions,
+        get_vis_discussions(),
         state.context,
         state.file_contexts,
         state.ai_suggestions,
@@ -75,7 +80,7 @@ function M.setup_keymaps(state, layout, active_states)
           layout.main_buf,
           file,
           state.review,
-          state.discussions,
+          get_vis_discussions(),
           state.context,
           state.ai_suggestions,
           state.row_selection,
@@ -270,7 +275,7 @@ function M.setup_keymaps(state, layout, active_states)
         layout.main_buf,
         state.files,
         state.review,
-        state.discussions,
+        get_vis_discussions(),
         state.context,
         state.file_contexts,
         state.ai_suggestions,
@@ -290,7 +295,7 @@ function M.setup_keymaps(state, layout, active_states)
         layout.main_buf,
         file,
         state.review,
-        state.discussions,
+        get_vis_discussions(),
         state.context,
         state.ai_suggestions,
         state.row_selection,
@@ -533,7 +538,9 @@ function M.setup_keymaps(state, layout, active_states)
     local provider_name = cfg.ai and cfg.ai.provider or "claude_cli"
     local spinner = require("codereview.ui.spinner")
 
-    if not state._solve_pending then state._solve_pending = 0 end
+    if not state._solve_pending then
+      state._solve_pending = 0
+    end
 
     local function dec_spinner()
       state._solve_pending = (state._solve_pending or 1) - 1
@@ -555,15 +562,21 @@ function M.setup_keymaps(state, layout, active_states)
       local width = math.min(100, math.floor(vim.o.columns * 0.8))
       local height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8))
       local win = vim.api.nvim_open_win(buf, true, {
-        relative = "editor", width = width, height = height,
+        relative = "editor",
+        width = width,
+        height = height,
         row = math.floor((vim.o.lines - height) / 2),
         col = math.floor((vim.o.columns - width) / 2),
-        style = "minimal", border = "rounded",
-        title = " " .. (title or "AI: Solve Comments") .. " ", title_pos = "center",
+        style = "minimal",
+        border = "rounded",
+        title = " " .. (title or "AI: Solve Comments") .. " ",
+        title_pos = "center",
       })
       vim.wo[win].wrap = true
       local function close()
-        if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+        if vim.api.nvim_win_is_valid(win) then
+          vim.api.nvim_win_close(win, true)
+        end
       end
       vim.keymap.set("n", "q", close, { buffer = buf, noremap = true, silent = true })
       vim.keymap.set("n", "<Esc>", close, { buffer = buf, noremap = true, silent = true })
@@ -581,10 +594,7 @@ function M.setup_keymaps(state, layout, active_states)
     end
 
     local total_files = #files_order
-    vim.notify(
-      string.format("Solving %d comment(s) across %d file(s)…", #items, total_files),
-      vim.log.levels.INFO
-    )
+    vim.notify(string.format("Solving %d comment(s) across %d file(s)…", #items, total_files), vim.log.levels.INFO)
 
     if provider_name == "copilot_cli" then
       local pcfg = cfg.ai.copilot_cli or {}
@@ -601,7 +611,10 @@ function M.setup_keymaps(state, layout, active_states)
         }
 
         for idx, item in ipairs(file_items) do
-          table.insert(prompt_parts, string.format("## Comment %d (from %s, line %s)", idx, item.author, tostring(item.line_nr or "?")))
+          table.insert(
+            prompt_parts,
+            string.format("## Comment %d (from %s, line %s)", idx, item.author, tostring(item.line_nr or "?"))
+          )
           table.insert(prompt_parts, item.body)
           -- Include ±10 lines of context around each comment
           if item.line_nr then
@@ -622,7 +635,10 @@ function M.setup_keymaps(state, layout, active_states)
           table.insert(prompt_parts, "")
         end
 
-        table.insert(prompt_parts, "Apply the minimal fixes for ALL of the above comments directly to the file. Do not ask for confirmation.")
+        table.insert(
+          prompt_parts,
+          "Apply the minimal fixes for ALL of the above comments directly to the file. Do not ask for confirmation."
+        )
         table.insert(prompt_parts, "")
         table.insert(prompt_parts, "After applying all fixes, output a git commit message in this exact format:")
         table.insert(prompt_parts, "COMMIT_SUBJECT: <one-line subject, conventional commits style, max 72 chars>")
@@ -632,12 +648,16 @@ function M.setup_keymaps(state, layout, active_states)
 
         local agent_prompt = table.concat(prompt_parts, "\n")
         local cmd = {
-          copilot_cmd, "--silent", "--no-auto-update",
-          "-p", agent_prompt,
+          copilot_cmd,
+          "--silent",
+          "--no-auto-update",
+          "-p",
+          agent_prompt,
           "--allow-tool=write",
           "--allow-tool=shell(git add:*)",
           "--allow-tool=shell(git commit:*)",
-          "--add-dir", root,
+          "--add-dir",
+          root,
         }
         if pcfg.model and pcfg.model ~= "" then
           table.insert(cmd, "--model")
@@ -652,15 +672,24 @@ function M.setup_keymaps(state, layout, active_states)
         local basename = first.basename
         vim.fn.jobstart(cmd, {
           cwd = root,
-          stdout_buffered = true, stderr_buffered = true,
+          stdout_buffered = true,
+          stderr_buffered = true,
           on_stdout = function(_, data)
             if data then
-              for _, c in ipairs(data) do if c ~= "" then table.insert(stdout_chunks, c) end end
+              for _, c in ipairs(data) do
+                if c ~= "" then
+                  table.insert(stdout_chunks, c)
+                end
+              end
             end
           end,
           on_stderr = function(_, data)
             if data then
-              for _, c in ipairs(data) do if c ~= "" then table.insert(stderr_chunks, c) end end
+              for _, c in ipairs(data) do
+                if c ~= "" then
+                  table.insert(stderr_chunks, c)
+                end
+              end
             end
           end,
           on_exit = function(_, code)
@@ -670,12 +699,18 @@ function M.setup_keymaps(state, layout, active_states)
               if code == 0 then
                 local copilot_subject = output:match("COMMIT_SUBJECT:%s*([^\n]+)")
                 local copilot_body = output:match("COMMIT_BODY:\n([%s%S]-)\nEND_COMMIT")
-                if copilot_subject then copilot_subject = vim.trim(copilot_subject) end
-                if copilot_body then copilot_body = vim.trim(copilot_body) end
+                if copilot_subject then
+                  copilot_subject = vim.trim(copilot_subject)
+                end
+                if copilot_body then
+                  copilot_body = vim.trim(copilot_body)
+                end
 
                 vim.notify(string.format("✓ Copilot applied fixes to %s", basename), vim.log.levels.INFO)
 
-                local display_output = output:gsub("\nCOMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
+                local display_output = output
+                  :gsub("\nCOMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
+                  :gsub("^COMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
                 display_output = vim.trim(display_output)
 
                 local subject = copilot_subject and copilot_subject ~= "" and copilot_subject
@@ -683,7 +718,9 @@ function M.setup_keymaps(state, layout, active_states)
                 local body = copilot_body or ""
 
                 vim.ui.input({ prompt = "Commit message: ", default = subject }, function(msg)
-                  if not msg or vim.trim(msg) == "" then return end
+                  if not msg or vim.trim(msg) == "" then
+                    return
+                  end
                   local full_msg = body ~= "" and (msg .. "\n\n" .. body) or msg
                   vim.fn.jobstart({ "git", "add", abs_path }, {
                     cwd = root,
@@ -717,7 +754,9 @@ function M.setup_keymaps(state, layout, active_states)
                 local stderr_str = table.concat(stderr_chunks, "\n")
                 local msg = output ~= "" and output or stderr_str
                 vim.notify(string.format("Copilot solve failed for %s (exit %d)", basename, code), vim.log.levels.ERROR)
-                if msg ~= "" then open_result_float(msg, "Copilot: Error — " .. basename) end
+                if msg ~= "" then
+                  open_result_float(msg, "Copilot: Error — " .. basename)
+                end
               end
             end)
           end,
@@ -737,12 +776,16 @@ function M.setup_keymaps(state, layout, active_states)
 
         local prompt_parts = {
           "You are helping a developer fix a code review comment.",
-          "", "## Review Comment",
+          "",
+          "## Review Comment",
           "Author: " .. item.author,
           "File: " .. item.file,
           item.line_nr and ("Line: " .. item.line_nr) or "",
-          "", item.body, "",
-          "## Task", "Produce the minimal fix.",
+          "",
+          item.body,
+          "",
+          "## Task",
+          "Produce the minimal fix.",
           "",
           string.format("Output a unified diff for `%s` in a ```diff fenced block (git apply format).", item.file),
           "After the diff block, briefly explain what changed.",
@@ -763,16 +806,27 @@ function M.setup_keymaps(state, layout, active_states)
           end
           local stderr_chunks = {}
           local apply_job = vim.fn.jobstart({ "git", "apply", "-" }, {
-            cwd = root, stdout_buffered = true, stderr_buffered = true,
+            cwd = root,
+            stdout_buffered = true,
+            stderr_buffered = true,
             on_stderr = function(_, data)
-              if data then for _, c in ipairs(data) do if c ~= "" then table.insert(stderr_chunks, c) end end end
+              if data then
+                for _, c in ipairs(data) do
+                  if c ~= "" then
+                    table.insert(stderr_chunks, c)
+                  end
+                end
+              end
             end,
             on_exit = function(_, code)
               vim.schedule(function()
                 if code == 0 then
                   vim.notify("✓ Fix applied to " .. item.basename, vim.log.levels.INFO)
                 else
-                  vim.notify("git apply failed for " .. item.basename .. ": " .. table.concat(stderr_chunks, " "), vim.log.levels.WARN)
+                  vim.notify(
+                    "git apply failed for " .. item.basename .. ": " .. table.concat(stderr_chunks, " "),
+                    vim.log.levels.WARN
+                  )
                   open_result_float(output, "AI: " .. item.basename .. " (apply failed)")
                 end
               end)
@@ -1278,7 +1332,7 @@ function M.setup_keymaps(state, layout, active_states)
           layout.main_buf,
           state.files,
           state.review,
-          state.discussions,
+          get_vis_discussions(),
           state.context,
           state.file_contexts,
           state.ai_suggestions,
@@ -1307,7 +1361,7 @@ function M.setup_keymaps(state, layout, active_states)
           layout.main_buf,
           file,
           state.review,
-          state.discussions,
+          get_vis_discussions(),
           state.context,
           state.ai_suggestions,
           state.row_selection,
@@ -1755,7 +1809,7 @@ function M.setup_keymaps(state, layout, active_states)
             layout.main_buf,
             state.files,
             state.review,
-            state.discussions,
+            get_vis_discussions(),
             state.context,
             state.file_contexts,
             state.ai_suggestions,
@@ -1963,7 +2017,7 @@ function M.setup_keymaps(state, layout, active_states)
             layout.main_buf,
             state.files,
             state.review,
-            state.discussions,
+            get_vis_discussions(),
             state.context,
             state.file_contexts,
             state.ai_suggestions,
@@ -2414,7 +2468,9 @@ function M.setup_keymaps(state, layout, active_states)
       end
     end,
     solve_comment = function()
-      if not layout.main_win or not vim.api.nvim_win_is_valid(layout.main_win) then return end
+      if not layout.main_win or not vim.api.nvim_win_is_valid(layout.main_win) then
+        return
+      end
       local disc = get_cursor_disc() or get_summary_disc()
       if not disc or not disc.notes or not disc.notes[1] then
         vim.notify("No comment at cursor", vim.log.levels.WARN)
@@ -2483,10 +2539,7 @@ function M.setup_keymaps(state, layout, active_states)
         table.insert(prompt_parts, "")
       end
       table.insert(prompt_parts, "## Task")
-      table.insert(
-        prompt_parts,
-        "Produce the minimal fix for this review comment."
-      )
+      table.insert(prompt_parts, "Produce the minimal fix for this review comment.")
       table.insert(prompt_parts, "")
       table.insert(
         prompt_parts,
@@ -2495,14 +2548,8 @@ function M.setup_keymaps(state, layout, active_states)
           file
         )
       )
-      table.insert(
-        prompt_parts,
-        "The diff must use the real file path in the a/... and b/... headers."
-      )
-      table.insert(
-        prompt_parts,
-        "After the diff block, add a brief explanation of what you changed and why."
-      )
+      table.insert(prompt_parts, "The diff must use the real file path in the a/... and b/... headers.")
+      table.insert(prompt_parts, "After the diff block, add a brief explanation of what you changed and why.")
       table.insert(
         prompt_parts,
         "If the change cannot be expressed as a diff (e.g. the comment is informational only), output only the explanation and no diff block."
@@ -2654,7 +2701,10 @@ function M.setup_keymaps(state, layout, active_states)
         table.insert(agent_prompt_parts, "")
         table.insert(agent_prompt_parts, "Apply the minimal fix directly to the file. Do not ask for confirmation.")
         table.insert(agent_prompt_parts, "")
-        table.insert(agent_prompt_parts, "After applying the fix, output a git commit message for the change in this exact format:")
+        table.insert(
+          agent_prompt_parts,
+          "After applying the fix, output a git commit message for the change in this exact format:"
+        )
         table.insert(agent_prompt_parts, "COMMIT_SUBJECT: <one-line subject, conventional commits style, max 72 chars>")
         table.insert(agent_prompt_parts, "COMMIT_BODY:")
         table.insert(agent_prompt_parts, "<body explaining what changed and why, 2-3 sentences max>")
@@ -2665,11 +2715,13 @@ function M.setup_keymaps(state, layout, active_states)
           copilot_cmd,
           "--silent",
           "--no-auto-update",
-          "-p", agent_prompt,
+          "-p",
+          agent_prompt,
           "--allow-tool=write",
           "--allow-tool=shell(git add:*)",
           "--allow-tool=shell(git commit:*)",
-          "--add-dir", root,
+          "--add-dir",
+          root,
         }
         if pcfg.model and pcfg.model ~= "" then
           table.insert(cmd, "--model")
@@ -2685,14 +2737,18 @@ function M.setup_keymaps(state, layout, active_states)
           on_stdout = function(_, data)
             if data then
               for _, chunk in ipairs(data) do
-                if chunk ~= "" then table.insert(stdout_chunks, chunk) end
+                if chunk ~= "" then
+                  table.insert(stdout_chunks, chunk)
+                end
               end
             end
           end,
           on_stderr = function(_, data)
             if data then
               for _, chunk in ipairs(data) do
-                if chunk ~= "" then table.insert(stderr_chunks, chunk) end
+                if chunk ~= "" then
+                  table.insert(stderr_chunks, chunk)
+                end
               end
             end
           end,
@@ -2714,7 +2770,9 @@ function M.setup_keymaps(state, layout, active_states)
                 vim.notify(string.format("✓ Copilot applied fix to %s", basename), vim.log.levels.INFO)
 
                 -- Strip the commit block from display output
-                local display_output = output:gsub("\nCOMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", ""):gsub("^COMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
+                local display_output = output
+                  :gsub("\nCOMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
+                  :gsub("^COMMIT_SUBJECT:[%s%S]-END_COMMIT\n?", "")
                 display_output = vim.trim(display_output)
 
                 -- Build the prefill: Copilot's subject if available, else derived from comment
@@ -2766,10 +2824,7 @@ function M.setup_keymaps(state, layout, active_states)
               else
                 local stderr_str = table.concat(stderr_chunks, "\n")
                 local msg = output ~= "" and output or stderr_str
-                vim.notify(
-                  string.format("Copilot solve failed (exit %d)", code),
-                  vim.log.levels.ERROR
-                )
+                vim.notify(string.format("Copilot solve failed (exit %d)", code), vim.log.levels.ERROR)
                 if msg ~= "" then
                   open_result_float(msg, "Copilot: Error")
                 end
@@ -2817,7 +2872,9 @@ function M.setup_keymaps(state, layout, active_states)
           on_stderr = function(_, data)
             if data then
               for _, chunk in ipairs(data) do
-                if chunk ~= "" then table.insert(stderr_chunks, chunk) end
+                if chunk ~= "" then
+                  table.insert(stderr_chunks, chunk)
+                end
               end
             end
           end,
@@ -2905,6 +2962,48 @@ function M.setup_keymaps(state, layout, active_states)
         vim.notify("Could not open file: " .. tostring(err), vim.log.levels.ERROR)
       end
     end,
+
+    mark_addressed = function()
+      local disc = get_cursor_disc() or get_summary_disc()
+      if not disc then
+        vim.notify("No comment at cursor", vim.log.levels.WARN)
+        return
+      end
+      if disc.id == nil then
+        vim.notify("Only published comments can be marked addressed", vim.log.levels.WARN)
+        return
+      end
+      local addressed_mod = require("codereview.mr.addressed")
+      local new_state = addressed_mod.toggle(state.ctx, state.review, disc.id)
+      state.addressed_set = addressed_mod.get_set(state.ctx, state.review)
+      if new_state then
+        vim.notify("Comment marked as addressed", vim.log.levels.INFO)
+      else
+        vim.notify("Comment unmarked", vim.log.levels.INFO)
+      end
+      if state.view_mode == "summary" then
+        diff_sidebar.render_summary(layout.main_buf, state)
+      else
+        rerender_view()
+      end
+      diff_sidebar.render_sidebar(layout.sidebar_buf, state)
+    end,
+
+    toggle_show_addressed = function()
+      state.show_addressed = not state.show_addressed
+      if state.show_addressed then
+        vim.notify("Showing addressed comments", vim.log.levels.INFO)
+      else
+        vim.notify("Hiding addressed comments", vim.log.levels.INFO)
+      end
+      if state.view_mode == "summary" then
+        diff_sidebar.render_summary(layout.main_buf, state)
+      else
+        rerender_view()
+      end
+      diff_sidebar.render_sidebar(layout.sidebar_buf, state)
+    end,
+
     refresh = refresh,
     quit = quit,
   }
@@ -2966,6 +3065,8 @@ function M.setup_keymaps(state, layout, active_states)
     solve_file_comments = main_callbacks.solve_file_comments,
     solve_all_comments = main_callbacks.solve_all_comments,
     open_file = main_callbacks.open_file,
+    mark_addressed = main_callbacks.mark_addressed,
+    toggle_show_addressed = main_callbacks.toggle_show_addressed,
     refresh = refresh,
     quit = quit,
   }
@@ -3049,7 +3150,7 @@ function M.setup_keymaps(state, layout, active_states)
             layout.main_buf,
             state.files,
             state.review,
-            state.discussions,
+            get_vis_discussions(),
             state.context,
             state.file_contexts,
             state.ai_suggestions,
@@ -3073,7 +3174,7 @@ function M.setup_keymaps(state, layout, active_states)
             layout.main_buf,
             state.files[entry.idx],
             state.review,
-            state.discussions,
+            get_vis_discussions(),
             state.context,
             state.ai_suggestions,
             state.row_selection,

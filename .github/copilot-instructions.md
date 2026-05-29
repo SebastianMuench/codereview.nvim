@@ -10,11 +10,13 @@ make test    # busted --run unit tests/
 ```
 
 Run a single spec file:
+
 ```sh
 busted --run unit tests/codereview/mr/diff_spec.lua
 ```
 
 Run tests matching a name pattern:
+
 ```sh
 busted --run unit tests/ --filter "mr.diff"
 ```
@@ -48,6 +50,7 @@ lua/codereview/
 ```
 
 **Data flow for `:CodeReview`:**
+
 1. `mr/list.lua` fetches open MRs/PRs via the provider API
 2. `picker/` displays results; user selects one
 3. `mr/detail.lua` opens the diff view (tab + sidebar + diff buffer)
@@ -60,24 +63,34 @@ lua/codereview/
 
 ## Key conventions
 
+### Documentation
+
+- When introducing a new functionality or module please update the README with a brief description and usage instructions.
+
 ### Module structure
+
 All Lua modules use the standard `local M = {}` / `return M` pattern. No OOP classes.
 
 ### LuaLS annotations
+
 Public functions and all types are annotated with LuaLS (`---@class`, `---@field`, `---@param`, `---@return`). Keep annotations consistent with implementations. The main `codereview.Config` class lives in `config.lua`.
 
 ### Testing
+
 - Tests run outside Neovim via `busted`. The `vim` global is fully stubbed in `tests/unit_helper.lua` — do not use any Neovim runtime API in tests without adding a stub there first.
 - `plenary.curl` is stubbed as `_G._plenary_curl_stub`; override its methods in tests to simulate HTTP responses.
 - Test files are named `*_spec.lua` and live alongside their source under `tests/codereview/`.
 
 ### Style
+
 - **StyLua**: 120 columns, 2-space indent, double quotes preferred, always call parentheses.
 - **Luacheck**: LuaJIT std, `vim` global allowed, unused args allowed.
 - Run `make format` before committing; CI enforces `stylua --check`.
 
 ### `.codereview.nvim` project config file
+
 Parsed by `lua/codereview/config_file.lua` (INI-style, `#` comments). Keys: `platform`, `project`, `base_url`, `token`, `ai_skip_patterns`. This file is per-project and typically gitignored when it contains a token.
 
 ### Backward compatibility
+
 `config.setup()` maintains aliases for renamed keys (`gitlab_url → base_url`, `claude_cmd/agent → ai.claude_cli.*`, old `token` key emits a deprecation warning). Preserve this pattern when renaming config keys.

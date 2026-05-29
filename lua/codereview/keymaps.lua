@@ -41,6 +41,8 @@ local M = {}
 ---@field solve_file_comments? codereview.keymap.Key
 ---@field solve_all_comments? codereview.keymap.Key
 ---@field open_file? codereview.keymap.Key
+---@field mark_addressed? codereview.keymap.Key
+---@field toggle_show_addressed? codereview.keymap.Key
 
 local defaults = {
   next_file = { key = "]f", mode = "n", desc = "Next file" },
@@ -85,6 +87,8 @@ local defaults = {
   solve_file_comments = { key = "sf", mode = "n", desc = "Solve all comments in file" },
   solve_all_comments = { key = "sC", mode = "n", desc = "Solve all PR comments" },
   open_file = { key = "<leader>gf", mode = "n", desc = "Open file in editor" },
+  mark_addressed = { key = "m", mode = "n", desc = "Mark/unmark comment as addressed" },
+  toggle_show_addressed = { key = "<C-t>", mode = "n", desc = "Toggle show addressed comments" },
 }
 
 local function deep_copy(orig)

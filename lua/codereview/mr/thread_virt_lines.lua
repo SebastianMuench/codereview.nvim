@@ -134,6 +134,7 @@ function M.build(disc, opts)
 
   local first = notes[1]
   local resolved = M.is_resolved(disc)
+  local is_addressed = disc.local_addressed == true
   local is_pending = disc.is_optimistic
   local is_err = disc.is_failed
 
@@ -156,6 +157,7 @@ function M.build(disc, opts)
   local header_meta = time_str ~= "" and (" · " .. time_str) or ""
   local header_text = "@" .. first.author
   local outdated_str = outdated and " Outdated" or ""
+  local addressed_str = is_addressed and " ✓ Addressed" or ""
 
   local virt_lines = {}
   local spacer_offset = nil
@@ -266,6 +268,10 @@ function M.build(disc, opts)
     local fill = math.max(0, comment_width + 2 - #header_text - #header_meta - #outdated_str - #status_text)
     table.insert(header_chunks, { string.rep(" ", fill), bdr })
     table.insert(header_chunks, { status_text, bdr })
+  elseif is_addressed then
+    local fill = math.max(0, comment_width + 2 - #header_text - #header_meta - #outdated_str - #addressed_str)
+    table.insert(header_chunks, { string.rep(" ", fill), bdr })
+    table.insert(header_chunks, { addressed_str, "CodeReviewStatusResolved" })
   else
     local dot = resolved and "○ " or "● "
     local dot_hl = resolved and "CodeReviewStatusResolved" or "CodeReviewStatusUnresolved"
@@ -385,6 +391,7 @@ function M.build(disc, opts)
     local k_copy = km.get("copy_comment") or "yc"
     local k_pipe = km.get("pipe_comment") or "ya"
     local k_solve = km.get("solve_comment") or "sc"
+    local k_mark = km.get("mark_comment") or "m"
     if disc.is_draft then
       footer_content = k_delete .. ":delete"
     elseif sel_note and current_user and sel_note.author == current_user then
@@ -403,7 +410,9 @@ function M.build(disc, opts)
         .. k_pipe
         .. ":ai  "
         .. k_solve
-        .. ":solve"
+        .. ":solve  "
+        .. k_mark
+        .. ":mark"
     else
       footer_content = k_reply
         .. ":reply  "

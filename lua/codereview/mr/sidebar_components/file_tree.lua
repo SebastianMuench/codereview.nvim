@@ -51,6 +51,27 @@ local function count_file_unresolved(file, discussions, line_to_row, review, com
   return n
 end
 
+local function count_file_addressed(file, discussions, addressed_set, line_to_row, review, commit_filter, line_data)
+  if not addressed_set or not next(addressed_set) then
+    return 0
+  end
+  local n = 0
+  for _, disc in ipairs(discussions or {}) do
+    if addressed_set[tostring(disc.id)] and discussion_matches_file(disc, file, review, commit_filter) then
+      if line_to_row then
+        local target_line, _, outdated = discussion_line(disc, review, commit_filter)
+        local row = target_line and line_to_row[target_line]
+        if row and not (outdated and is_context_line(row, commit_filter, line_data)) then
+          n = n + 1
+        end
+      else
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
 local function count_file_ai(file, suggestions)
   local n = 0
   local path = file.new_path or file.old_path
@@ -98,6 +119,16 @@ local function render_file_entry(state, files, entry, lines, row_map, max_name_b
   local ucount =
     count_file_unresolved(file, state.discussions, line_to_row, state.review, state.commit_filter, cached_ld)
   local ustr = ucount > 0 and (" ⚠" .. ucount) or ""
+  local acount = count_file_addressed(
+    file,
+    state.discussions,
+    state.addressed_set,
+    line_to_row,
+    state.review,
+    state.commit_filter,
+    cached_ld
+  )
+  local astr = acount > 0 and (" ✓" .. acount) or ""
   local aicount = count_file_ai(file, state.ai_suggestions)
   local aistr = aicount > 0 and (" ✨" .. aicount) or ""
 
@@ -109,12 +140,12 @@ local function render_file_entry(state, files, entry, lines, row_map, max_name_b
   end
 
   local name = entry.name
-  local max_name = max_name_base - #cstr - #ustr - #aistr
+  local max_name = max_name_base - #cstr - #ustr - #astr - #aistr
   if #name > max_name then
     name = ".." .. name:sub(-(max_name - 2))
   end
 
-  table.insert(lines, string.format("  %s %s%s%s%s", review_icon, name, cstr, ustr, aistr))
+  table.insert(lines, string.format("  %s %s%s%s%s%s", review_icon, name, cstr, ustr, astr, aistr))
   local review_status = (
     state.file_review_status
     and state.file_review_status[path]

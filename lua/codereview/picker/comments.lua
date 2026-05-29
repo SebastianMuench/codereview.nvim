@@ -99,14 +99,23 @@ function M.pick(state, layout)
     return
   end
 
-  local entries = M.build_entries(state.discussions, state.ai_suggestions, state.files or {})
+  local entries = M.build_entries(
+    require("codereview.mr.diff_state").visible_discussions(state),
+    state.ai_suggestions,
+    state.files or {}
+  )
   if #entries == 0 then
     vim.notify("No comments or suggestions in current review", vim.log.levels.INFO)
     return
   end
 
   local function rebuild(filter)
-    return M.build_entries(state.discussions, state.ai_suggestions, state.files or {}, filter)
+    return M.build_entries(
+      require("codereview.mr.diff_state").visible_discussions(state),
+      state.ai_suggestions,
+      state.files or {},
+      filter
+    )
   end
 
   local adapter = picker.get_adapter(name)

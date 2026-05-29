@@ -31,6 +31,7 @@
 - **AI comment solving** — press `sc` to auto-fix a review comment: generates a unified diff, applies it via `git apply`, and offers a commit message; `sf` / `sC` solve all comments in the current file or the entire PR
 - **Copy & pipe comments** — `yc` copies a comment to the clipboard; `ya` pipes it to an AI tool via the `hooks.pipe_comment` callback (e.g., sidekick.nvim)
 - **Open file in editor** — `<leader>gf` opens the current file in a vsplit alongside the diff, jumping to the commented line
+- **Addressed comment flags** — mark comments as done on your end with `m`; they hide by default and are persisted locally across sessions; `<C-t>` toggles visibility
 - **Review sessions** — accumulate draft comments, submit in batch
 - **MR actions** — approve, merge, open in browser, create new MR/PR
 
@@ -300,6 +301,8 @@ Patterns are comma-separated globs, merged with plugin config `ai.skip_patterns`
 | `sc` | Solve comment with AI (generates & applies a fix, offers commit message) |
 | `sf` | Solve all comments in current file with AI |
 | `sC` | Solve all PR/MR comments with AI |
+| `m` | Mark / unmark comment as addressed (persisted locally) |
+| `<C-t>` | Toggle visibility of addressed comments |
 
 ### AI Suggestions
 
@@ -351,7 +354,7 @@ keymaps = {
 },
 ```
 
-Available action names: `next_file`, `prev_file`, `next_commit`, `prev_commit`, `move_down`, `move_up`, `select_next_note`, `select_prev_note`, `create_comment`, `create_range_comment`, `accept_suggestion`, `dismiss_suggestion`, `edit_suggestion`, `reply`, `edit_note`, `delete_note`, `react`, `toggle_resolve`, `toggle_full_file`, `dismiss_all_suggestions`, `submit`, `approve`, `refresh`, `quit`, `open_in_browser`, `merge`, `show_pipeline`, `ai_review`, `ai_review_file`, `pick_comments`, `pick_files`, `pick_commits`, `copy_comment`, `pipe_comment`, `solve_comment`, `solve_file_comments`, `solve_all_comments`, `open_file`.
+Available action names: `next_file`, `prev_file`, `next_commit`, `prev_commit`, `move_down`, `move_up`, `select_next_note`, `select_prev_note`, `create_comment`, `create_range_comment`, `accept_suggestion`, `dismiss_suggestion`, `edit_suggestion`, `reply`, `edit_note`, `delete_note`, `react`, `toggle_resolve`, `toggle_full_file`, `dismiss_all_suggestions`, `submit`, `approve`, `refresh`, `quit`, `open_in_browser`, `merge`, `show_pipeline`, `ai_review`, `ai_review_file`, `pick_comments`, `pick_files`, `pick_commits`, `copy_comment`, `pipe_comment`, `solve_comment`, `solve_file_comments`, `solve_all_comments`, `open_file`, `mark_addressed`, `toggle_show_addressed`.
 
 ## Commands
 

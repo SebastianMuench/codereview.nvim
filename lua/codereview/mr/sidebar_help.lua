@@ -79,6 +79,8 @@ function M.build_lines()
       { action = "solve_comment", desc = "Solve comment with AI" },
       { action = "solve_file_comments", desc = "Solve all comments in file" },
       { action = "solve_all_comments", desc = "Solve all PR comments" },
+      { action = "mark_addressed", desc = "Mark/unmark comment as addressed" },
+      { action = "toggle_show_addressed", desc = "Toggle show addressed comments" },
       { action = "refresh", desc = "Refresh" },
       { action = "quit", desc = "Quit" },
     },
